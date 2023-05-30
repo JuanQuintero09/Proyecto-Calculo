@@ -1,0 +1,126 @@
+---------------------------------ARDUINO--------------------------------------
+
+begin();
+
+  // Inicializar el MPU6050
+  Wire.begin();
+  mpu6050.begin();
+  mpu6050.calcGyroOffsets();
+
+  // Conexión a la red Wi-Fi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi");
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+
+  // Verificar el intervalo de tiempo para realizar la lectura
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+
+    // Lectura de los datos del sensor DHT11
+    float temperature = dht.readTemperature();
+    float humidity = dht.readHumidity();
+
+    // Lectura de los datos del MPU6050
+    mpu6050.update();
+    float ax = mpu6050.getAccX();
+    float ay = mpu6050.getAccY();
+    float az = mpu6050.getAccZ();
+    float gx = mpu6050.getGyroX();
+    float gy = mpu6050.getGyroY();
+    float gz = mpu6050.getGyroZ();
+
+    // Formato de los datos para enviar a Matlab
+    String data = String(temperature, 2) + "," + String(humidity, 2) + "," +
+                  String(ax, 2) + "," + String(ay, 2) + "," + String(az, 2) + "," +
+                  String(gx, 2) + "," + String(gy, 2) + "," + String(gz, 2);
+
+    // Conexión al servidor Matlab a través del puerto serial
+    if (client.connect(serverIp, serverPort)) {
+      Serial.println("Connected to server");
+      client.println(data);
+      client.flush();
+      Serial.println("Data sent to server: " + data);
+      client.stop();
+    } else {
+      Serial.println("Connection to server failed");
+    }
+  }
+}
+
+
+
+--------------------------------CODIGO MATLAB-----------------------------
+
+% Configuración del servidor TCP/IP
+t = tcpserver('10.11.108.65', 2424); % Configurar como servidor
+
+% Crear una figura para la gráfica
+figure;
+xlabel('Tiempo (s)');
+ylabel('Temperatura (°C) / Humedad (%) / Aceleración (g) / Velocidad (m/s)');
+title('Datos en tiempo real');
+
+% Crear un vector para el tiempo y los datos de temperatura, humedad, aceleración y velocidad
+t_vec = [];
+temp_vec = [];
+hum_vec = [];
+accel_vec = [];
+vel_vec = [];
+
+% Iniciar el bucle principal
+while true
+    % Esperar hasta que se reciba un mensaje
+    while t.NumBytesAvailable == 0
+        pause(0.1);
+    end
+    
+    % Leer los datos enviados por el ESP32
+    data = read(t, t.NumBytesAvailable, 'char');
+    
+    % Convertir los datos a valores numéricos
+    data = strsplit(data, ',');
+    temp = str2double(data{1});
+    hum = str2double(data{2});
+    accel = str2double(data{3});
+    vel = str2double(data{4});
+    
+    % Imprimir los valores de temperatura, humedad, aceleración y velocidad
+    fprintf('Temperatura: %.2f°C\n', temp);
+    fprintf('Humedad: %.2f%%\n', hum);
+    fprintf('Aceleración: %.2fg\n', accel);
+    fprintf('Velocidad: %.2fm/s\n', vel);
+    
+    % Agregar los datos a los vectores de tiempo y las variables correspondientes
+    t_vec(end+1) = now;
+    temp_vec(end+1) = temp;
+    hum_vec(end+1) = hum;
+    accel_vec(end+1) = accel;
+    vel_vec(end+1) = vel;
+    
+    % Actualizar la gráfica con los nuevos datos
+    plot(t_vec, temp_vec, 'r', t_vec, hum_vec, 'b', t_vec, accel_vec, 'g', t_vec, vel_vec, 'm');
+    legend('Temperatura', 'Humedad', 'Aceleración', 'Velocidad');
+    
+    % Limitar el número de puntos en la gráfica a 50 para mejorar la visualización en tiempo real
+    if length(t_vec) > 50
+        t_vec(1) = [];
+        temp_vec(1) = [];
+        hum_vec(1) = [];
+        accel_vec(1) = [];
+        vel_vec(1) = [];
+    end
+    
+    % Esperar un tiempo antes de la siguiente lectura
+    pause(1);
+end
+
+% Cerrar la conexión TCP/IP
+fclose(t);
